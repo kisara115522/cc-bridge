@@ -35,4 +35,30 @@ describe("runDoctor", () => {
     expect(result.checks.map((check) => check.name)).toContain("config");
     expect(JSON.stringify(result)).not.toContain("secret-token");
   });
+
+  it("reports Telegram network failures without crashing", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "cc-bridge-doctor-"));
+    tempDirs.push(dir);
+    const result = await runDoctor({
+      env: {
+        TELEGRAM_BOT_TOKEN: "secret-token",
+        TELEGRAM_ALLOWED_USER_IDS: "user-1",
+        CC_BRIDGE_STATE_DIR: dir,
+        CODEX_COMMAND: process.execPath,
+        CODEX_ARGS: "--version",
+        CLAUDE_COMMAND: process.execPath,
+        CLAUDE_ARGS: "--version"
+      },
+      fetchImpl: async () => {
+        throw new TypeError("fetch failed");
+      }
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.checks.at(-1)).toEqual({
+      name: "telegram",
+      ok: false,
+      message: "getMe failed: fetch failed"
+    });
+  });
 });

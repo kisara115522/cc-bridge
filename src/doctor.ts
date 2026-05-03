@@ -10,6 +10,7 @@ import { openBridgeDatabase } from "./storage/database.js";
 
 export interface DoctorOptions extends LoadConfigOptions {
   readonly skipTelegramNetwork?: boolean;
+  readonly fetchImpl?: typeof fetch;
 }
 
 export interface DoctorCheck {
@@ -52,7 +53,7 @@ export async function runDoctor(options: DoctorOptions = {}): Promise<DoctorResu
   if (options.skipTelegramNetwork) {
     checks.push({ name: "telegram", ok: true, message: "network check skipped" });
   } else {
-    checks.push(await checkTelegram(config.telegram.botToken));
+    checks.push(await checkTelegram(config.telegram.botToken, options.fetchImpl ?? fetch));
   }
 
   return {
@@ -109,10 +110,18 @@ function checkCommand(name: string, command: string): DoctorCheck {
   return { name, ok: true, message: result.stdout.trim() || "ok" };
 }
 
-async function checkTelegram(token: string): Promise<DoctorCheck> {
-  const response = await fetch(`https://api.telegram.org/bot${token}/getMe`);
-  if (!response.ok) {
-    return { name: "telegram", ok: false, message: `getMe failed: ${response.status}` };
+async function checkTelegram(token: string, fetchImpl: typeof fetch): Promise<DoctorCheck> {
+  try {
+    const response = await fetchImpl(`https://api.telegram.org/bot${token}/getMe`);
+    if (!response.ok) {
+      return { name: "telegram", ok: false, message: `getMe failed: ${response.status}` };
+    }
+    return { name: "telegram", ok: true, message: "getMe ok" };
+  } catch (error) {
+    return {
+      name: "telegram",
+      ok: false,
+      message: `getMe failed: ${error instanceof Error ? error.message : String(error)}`
+    };
   }
-  return { name: "telegram", ok: true, message: "getMe ok" };
 }
