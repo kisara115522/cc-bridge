@@ -25,6 +25,7 @@ export interface BridgeAppOptions {
         payload: unknown;
         createdAt: string;
       }): number;
+      maxSequence(sessionId: string): number;
     };
     interactionMessages: {
       insert(message: {
@@ -249,6 +250,9 @@ export function createBridgeApp(options: BridgeAppOptions): BridgeApp {
     command: { command: string; args: string[]; cwd: string },
     tool: "codex" | "claude"
   ): Promise<RunnerHandle> {
+    // Initialize sequence from database to avoid UNIQUE constraint on resume
+    sequences.set(session.id, options.storage.runnerEvents.maxSequence(session.id));
+
     const handle = await options.runner.start({
       sessionId: session.id,
       tool,
