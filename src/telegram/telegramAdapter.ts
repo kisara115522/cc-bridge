@@ -20,6 +20,7 @@ import {
   type TelegramCallbackQuery,
   type TelegramMessage
 } from "./telegramFormat.js";
+import { createProxyFetch } from "./proxyFetch.js";
 
 export interface TelegramAdapterOptions {
   readonly token: string;
@@ -27,6 +28,7 @@ export interface TelegramAdapterOptions {
   readonly downloadDir: string;
   readonly apiBaseUrl?: string;
   readonly fetchImpl?: typeof fetch;
+  readonly proxyUrl?: string;
   readonly pollRetryDelayMs?: number;
   readonly onPollingError?: (error: unknown) => void;
 }
@@ -55,7 +57,7 @@ export class TelegramChannelAdapter implements ChannelAdapter {
 
   constructor(private readonly options: TelegramAdapterOptions) {
     this.apiBaseUrl = options.apiBaseUrl ?? `https://api.telegram.org/bot${options.token}`;
-    this.fetchImpl = options.fetchImpl ?? fetch;
+    this.fetchImpl = createProxyFetch(options.fetchImpl ?? fetch, options.proxyUrl);
     this.pollRetryDelayMs = options.pollRetryDelayMs ?? 1000;
   }
 

@@ -7,6 +7,7 @@ import type { BridgeConfig, LoadConfigOptions } from "./config/config.js";
 import { loadConfig } from "./config/config.js";
 import { redactConfig } from "./config/redact.js";
 import { openBridgeDatabase } from "./storage/database.js";
+import { createProxyFetch } from "./telegram/proxyFetch.js";
 
 export interface DoctorOptions extends LoadConfigOptions {
   readonly skipTelegramNetwork?: boolean;
@@ -53,7 +54,7 @@ export async function runDoctor(options: DoctorOptions = {}): Promise<DoctorResu
   if (options.skipTelegramNetwork) {
     checks.push({ name: "telegram", ok: true, message: "network check skipped" });
   } else {
-    checks.push(await checkTelegram(config.telegram.botToken, options.fetchImpl ?? fetch));
+    checks.push(await checkTelegram(config.telegram.botToken, createProxyFetch(options.fetchImpl ?? fetch)));
   }
 
   return {

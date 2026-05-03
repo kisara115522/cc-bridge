@@ -43,6 +43,17 @@ node dist/src/index.js doctor --skip-telegram-network
 node dist/src/index.js start
 ```
 
+If Telegram is blocked on your network, set an HTTP proxy before running `doctor` or `start`:
+
+```bash
+export HTTPS_PROXY=http://127.0.0.1:7897
+export HTTP_PROXY=http://127.0.0.1:7897
+node dist/src/index.js doctor
+node dist/src/index.js start
+```
+
+`ping` does not use HTTP proxies, so use `curl -x http://127.0.0.1:7897 https://api.telegram.org` to test the proxy path.
+
 ## Telegram Commands
 
 ```text

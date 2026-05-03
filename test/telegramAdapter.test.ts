@@ -10,6 +10,30 @@ function telegramJson(result: unknown): Response {
 }
 
 describe("TelegramChannelAdapter", () => {
+  it("passes a proxy dispatcher to Telegram fetch calls when a proxy url is configured", async () => {
+    let hasDispatcher = false;
+    const adapter = new TelegramChannelAdapter({
+      token: "token",
+      polling: false,
+      downloadDir: "/tmp/cc-bridge-test-downloads",
+      apiBaseUrl: "https://telegram.test/bottoken",
+      proxyUrl: "http://127.0.0.1:7897",
+      fetchImpl: async (_input, init) => {
+        hasDispatcher = Boolean(init && "dispatcher" in init);
+        return telegramJson({
+          message_id: 20,
+          date: 1777777777,
+          chat: { id: 42, type: "private" },
+          text: "ok"
+        });
+      }
+    } as ConstructorParameters<typeof TelegramChannelAdapter>[0]);
+
+    await adapter.sendMessage({ channel: "telegram", chatId: "42" }, { text: "hello" });
+
+    expect(hasDispatcher).toBe(true);
+  });
+
   it("keeps polling after a transient getUpdates network failure", async () => {
     let adapter: TelegramChannelAdapter;
     let calls = 0;
