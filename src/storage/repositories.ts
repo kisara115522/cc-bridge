@@ -304,6 +304,11 @@ function createRunnerEventRepository(db: Database) {
     where bridge_session_id = ?
     order by sequence asc, id asc
   `);
+  const maxSeq = db.prepare<string>(`
+    select coalesce(max(sequence), 0) as max_seq
+    from runner_events
+    where bridge_session_id = ?
+  `);
 
   return {
     insert(event: RunnerEventInput): number {
@@ -315,6 +320,10 @@ function createRunnerEventRepository(db: Database) {
     },
     list(sessionId: string): RunnerEventRecord[] {
       return (list.all(sessionId) as RunnerEventRow[]).map(mapRunnerEvent);
+    },
+    maxSequence(sessionId: string): number {
+      const row = maxSeq.get(sessionId) as { max_seq: number } | undefined;
+      return row?.max_seq ?? 0;
     },
   };
 }
