@@ -29,4 +29,92 @@ describe("terminal output chunking", () => {
 
     expect(chunks).toEqual(["abcdef", "ghijkl", "mnop"]);
   });
+
+  it("strips box-drawing border lines", () => {
+    const output = [
+      "╭──────────────────────────────────╮",
+      "│ Tips for getting started │",
+      "╰──────────────────────────────────╯",
+      "Hello world"
+    ].join("\n");
+    const chunks = chunkTerminalOutput(output, { maxChars: 200 });
+
+    expect(chunks).toEqual(["Hello world"]);
+  });
+
+  it("strips spinner and thinking status lines", () => {
+    const output = [
+      "✻ Tomfoolering… (0s)",
+      "thinking with xhigh effort",
+      "✻✽✶✳✢·",
+      "The actual response text"
+    ].join("\n");
+    const chunks = chunkTerminalOutput(output, { maxChars: 200 });
+
+    expect(chunks).toEqual(["The actual response text"]);
+  });
+
+  it("strips status bar and token count lines", () => {
+    const output = [
+      "xxx@XXXdeMacBook-Pro ~/Code/workSpace | mimo-v2.5-pro[1m] 22:08:50",
+      "0tokens",
+      "↓ 1 tokens",
+      "Actual content here"
+    ].join("\n");
+    const chunks = chunkTerminalOutput(output, { maxChars: 200 });
+
+    expect(chunks).toEqual(["Actual content here"]);
+  });
+
+  it("strips keyboard shortcut hint lines", () => {
+    const output = [
+      "⏵⏵ don't ask on (shift+tab to cycle)",
+      "Real message"
+    ].join("\n");
+    const chunks = chunkTerminalOutput(output, { maxChars: 200 });
+
+    expect(chunks).toEqual(["Real message"]);
+  });
+
+  it("cleans a realistic Claude Code TUI dump", () => {
+    const output = [
+      "╭───ClaudeCodev2.1.126──────────────────────────────────────────────────────────────────────────╮",
+      "││Tipsforgettingstarted│",
+      "╰──────────────────────────────────────────────────────────────────────────────────────────────────╯",
+      "",
+      "✻ Tomfoolering… (0s)",
+      "thinking with xhigh effort",
+      "thinking with xhigh effort",
+      "✻✽✶✳✢·",
+      "",
+      "∴ Thinking…                                        The user said \"hi\". Let me check if any skill applies.",
+      "",
+      "✻Tomfolering… (5s · ↓ 1 tokens · thinking with xhigh effort)",
+      "────────────────────────────────────────────────────────────────────────────────────────────────────",
+      "xxx@XXXdeMacBook-Pro ~/Code/workSpace |mimo-v2.5-pro[1m] 22:08:500tokens",
+      "⏵⏵don'taskon (shift+tabtocycle)"
+    ].join("\n");
+    const chunks = chunkTerminalOutput(output, { maxChars: 500 });
+
+    expect(chunks.length).toBeGreaterThan(0);
+    expect(chunks.join("\n")).toContain("The user said");
+    expect(chunks.join("\n")).not.toContain("Tomfoolering");
+    expect(chunks.join("\n")).not.toContain("╭");
+    expect(chunks.join("\n")).not.toContain("╰");
+    expect(chunks.join("\n")).not.toContain("tokens");
+    expect(chunks.join("\n")).not.toContain("shift+tab");
+  });
+
+  it("returns empty array when only TUI artifacts remain", () => {
+    const output = [
+      "╭───╮",
+      "│ │",
+      "╰───╯",
+      "✻✽✶",
+      "thinking with xhigh effort"
+    ].join("\n");
+    const chunks = chunkTerminalOutput(output, { maxChars: 200 });
+
+    expect(chunks).toEqual([]);
+  });
 });
