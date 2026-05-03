@@ -123,6 +123,33 @@ describe("SQLite storage", () => {
     expect(storage.sessions.getActive("telegram", "chat-1", "user-1")?.id).toBe("new-session");
   });
 
+  it("lists sessions for a channel principal and can switch the active session", async () => {
+    const { storage } = await openTempStorage();
+
+    storage.sessions.upsert(sessionFixture({ id: "session-1", isActive: true }));
+    storage.sessions.upsert(
+      sessionFixture({
+        id: "session-2",
+        tool: "claude",
+        isActive: false,
+        createdAt: "2026-05-03T10:05:00.000Z",
+        updatedAt: "2026-05-03T10:05:00.000Z",
+        lastActiveAt: "2026-05-03T10:05:00.000Z",
+      })
+    );
+
+    expect(storage.sessions.listForPrincipal("telegram", "chat-1", "user-1").map((session) => session.id)).toEqual([
+      "session-2",
+      "session-1",
+    ]);
+
+    storage.sessions.setActive("session-2");
+
+    expect(storage.sessions.get("session-1")?.isActive).toBe(false);
+    expect(storage.sessions.get("session-2")?.isActive).toBe(true);
+    expect(storage.sessions.getActive("telegram", "chat-1", "user-1")?.id).toBe("session-2");
+  });
+
   it("inserts and lists runner events in append order", async () => {
     const { storage } = await openTempStorage();
     storage.sessions.upsert(sessionFixture({ id: "session-1" }));

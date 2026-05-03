@@ -182,11 +182,22 @@ function createSessionRepository(db: Database) {
       "where s.channel = ? and s.channel_chat_id = ? and s.channel_user_id = ? and s.is_active = 1"
     )
   );
+  const selectForPrincipal = db.prepare<[string, string, string]>(
+    sessionSelectSql(
+      "where s.channel = ? and s.channel_chat_id = ? and s.channel_user_id = ? order by s.last_active_at desc, s.created_at desc"
+    )
+  );
+  const selectPrincipalById = db.prepare<string>(`
+    select channel, channel_chat_id, channel_user_id
+    from bridge_sessions
+    where id = ?
+  `);
   const clearActive = db.prepare<[string, string, string]>(`
     update bridge_sessions
     set is_active = 0
     where channel = ? and channel_chat_id = ? and channel_user_id = ?
   `);
+  const setActiveById = db.prepare<string>("update bridge_sessions set is_active = 1 where id = ?");
   const upsertSession = db.prepare(`
     insert into bridge_sessions (
       id, channel, channel_chat_id, channel_user_id, tool, cwd, status,
@@ -246,6 +257,17 @@ function createSessionRepository(db: Database) {
       });
     }
   });
+  const activateSession = db.transaction((id: string) => {
+    const principal = selectPrincipalById.get(id) as
+      | { channel: string; channel_chat_id: string; channel_user_id: string }
+      | undefined;
+    if (!principal) {
+      throw new Error(`Bridge session not found: ${id}`);
+    }
+
+    clearActive.run(principal.channel, principal.channel_chat_id, principal.channel_user_id);
+    setActiveById.run(id);
+  });
 
   return {
     upsert(session: BridgeSessionRecord): void {
@@ -258,6 +280,12 @@ function createSessionRepository(db: Database) {
     getActive(channel: string, chatId: string, userId: string): BridgeSessionRecord | null {
       const row = selectActive.get(channel, chatId, userId) as BridgeSessionRow | undefined;
       return row ? mapSession(row) : null;
+    },
+    listForPrincipal(channel: string, chatId: string, userId: string): BridgeSessionRecord[] {
+      return (selectForPrincipal.all(channel, chatId, userId) as BridgeSessionRow[]).map(mapSession);
+    },
+    setActive(id: string): void {
+      activateSession(id);
     },
   };
 }
