@@ -36,6 +36,10 @@ export function createProgram(): Command {
         onPollingError: (error) => {
           const message = error instanceof Error ? error.message : String(error);
           console.error(`Telegram polling failed: ${message}; retrying`);
+        },
+        onUpdateError: (error) => {
+          const message = error instanceof Error ? error.message : String(error);
+          console.error(`Telegram update handling failed: ${message}`);
         }
       });
       const app = createBridgeApp({

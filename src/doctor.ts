@@ -6,12 +6,14 @@ import { spawnSync } from "node:child_process";
 import type { BridgeConfig, LoadConfigOptions } from "./config/config.js";
 import { loadConfig } from "./config/config.js";
 import { redactConfig } from "./config/redact.js";
+import { createPtyRunner, type ToolRunner } from "./runner/ptyRunner.js";
 import { openBridgeDatabase } from "./storage/database.js";
 import { createProxyFetch } from "./telegram/proxyFetch.js";
 
 export interface DoctorOptions extends LoadConfigOptions {
   readonly skipTelegramNetwork?: boolean;
   readonly fetchImpl?: typeof fetch;
+  readonly ptyRunner?: ToolRunner;
 }
 
 export interface DoctorCheck {
@@ -48,6 +50,7 @@ export async function runDoctor(options: DoctorOptions = {}): Promise<DoctorResu
 
   checks.push(await checkStateDir(config.runtime.stateDir));
   checks.push(checkDatabase(config.runtime.stateDir));
+  checks.push(await checkPty(options.ptyRunner ?? createPtyRunner(), config.security.defaultCwd));
   checks.push(checkCommand("codex", config.tools.codex.command));
   checks.push(checkCommand("claude", config.tools.claude.command));
 
@@ -86,6 +89,30 @@ function checkDatabase(stateDir: string): DoctorCheck {
   } catch (error) {
     return {
       name: "database",
+      ok: false,
+      message: error instanceof Error ? error.message : String(error)
+    };
+  }
+}
+
+async function checkPty(runner: ToolRunner, cwd: string): Promise<DoctorCheck> {
+  try {
+    const handle = await runner.start({
+      sessionId: "doctor",
+      tool: "codex",
+      command: process.execPath,
+      args: ["--version"],
+      cwd,
+      env: {},
+      cols: 20,
+      rows: 5,
+      onEvent: () => {}
+    });
+    handle.terminate();
+    return { name: "pty", ok: true, message: "node-pty spawn ok" };
+  } catch (error) {
+    return {
+      name: "pty",
       ok: false,
       message: error instanceof Error ? error.message : String(error)
     };

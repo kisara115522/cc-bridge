@@ -31,6 +31,7 @@ export interface TelegramAdapterOptions {
   readonly proxyUrl?: string;
   readonly pollRetryDelayMs?: number;
   readonly onPollingError?: (error: unknown) => void;
+  readonly onUpdateError?: (error: unknown) => void;
 }
 
 interface TelegramUpdate {
@@ -131,14 +132,25 @@ export class TelegramChannelAdapter implements ChannelAdapter {
   private async poll(handlers: ChannelHandlers): Promise<void> {
     let offset: number | undefined;
     while (!this.stopped) {
+      let updates: TelegramUpdate[];
       try {
-        const updates = await this.callTelegram<TelegramUpdate[]>("getUpdates", {
+        updates = await this.callTelegram<TelegramUpdate[]>("getUpdates", {
           offset,
           timeout: 25,
           allowed_updates: ["message", "callback_query"]
         });
-        for (const update of updates) {
-          offset = update.update_id + 1;
+      } catch (error) {
+        if (this.stopped) {
+          return;
+        }
+        this.options.onPollingError?.(error);
+        await sleep(this.pollRetryDelayMs);
+        continue;
+      }
+
+      for (const update of updates) {
+        offset = update.update_id + 1;
+        try {
           if (update.message) {
             await handlers.onMessage(telegramMessageToInbound(update.message));
           }
@@ -148,13 +160,9 @@ export class TelegramChannelAdapter implements ChannelAdapter {
               await handlers.onInteraction(interaction);
             }
           }
+        } catch (error) {
+          this.options.onUpdateError?.(error);
         }
-      } catch (error) {
-        if (this.stopped) {
-          return;
-        }
-        this.options.onPollingError?.(error);
-        await sleep(this.pollRetryDelayMs);
       }
     }
   }

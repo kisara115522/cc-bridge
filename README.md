@@ -54,6 +54,15 @@ node dist/src/index.js start
 
 `ping` does not use HTTP proxies, so use `curl -x http://127.0.0.1:7897 https://api.telegram.org` to test the proxy path.
 
+If `doctor` reports `pty` as `posix_spawnp failed.`, rebuild the native PTY module and restart the bridge:
+
+```bash
+npm rebuild node-pty --build-from-source
+npm run build
+node dist/src/index.js doctor
+node dist/src/index.js start
+```
+
 ## Telegram Commands
 
 ```text

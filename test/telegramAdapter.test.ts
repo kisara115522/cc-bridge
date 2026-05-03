@@ -79,4 +79,52 @@ describe("TelegramChannelAdapter", () => {
     await messageSeen;
     expect(calls).toBeGreaterThanOrEqual(2);
   });
+
+  it("reports update handler failures separately from polling network failures", async () => {
+    const updateErrors: string[] = [];
+    const pollingErrors: string[] = [];
+    let adapter: TelegramChannelAdapter;
+    const updateFailed = new Promise<void>((resolve) => {
+      adapter = new TelegramChannelAdapter({
+        token: "token",
+        polling: true,
+        downloadDir: "/tmp/cc-bridge-test-downloads",
+        apiBaseUrl: "https://telegram.test/bottoken",
+        pollRetryDelayMs: 0,
+        onPollingError: (error) => {
+          pollingErrors.push(error instanceof Error ? error.message : String(error));
+        },
+        onUpdateError: (error) => {
+          updateErrors.push(error instanceof Error ? error.message : String(error));
+          resolve();
+          void adapter.stop();
+        },
+        fetchImpl: async () =>
+          telegramJson([
+            {
+              update_id: 10,
+              message: {
+                message_id: 20,
+                date: 1777777777,
+                chat: { id: 42, type: "private" },
+                from: { id: 99, first_name: "Ada" },
+                text: "/new codex"
+              }
+            }
+          ])
+      } as ConstructorParameters<typeof TelegramChannelAdapter>[0]);
+    });
+
+    await adapter!.start({
+      onMessage: async () => {
+        throw new Error("posix_spawnp failed.");
+      },
+      onInteraction: async () => {}
+    });
+    await updateFailed;
+    await adapter!.stop();
+
+    expect(updateErrors).toEqual(["posix_spawnp failed."]);
+    expect(pollingErrors).toEqual([]);
+  });
 });
