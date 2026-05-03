@@ -1,6 +1,7 @@
 import type TelegramBot from "node-telegram-bot-api";
 
 import type {
+  ChannelAttachment,
   ChannelButtonRow,
   ChannelInteraction,
   InboundMessage,
@@ -39,8 +40,31 @@ export function telegramMessageToInbound(message: TelegramBot.Message): InboundM
         }
       : null,
     text: message.text ?? message.caption,
-    attachments: []
+    attachments: telegramAttachments(message)
   };
+}
+
+function telegramAttachments(message: TelegramBot.Message): ChannelAttachment[] {
+  const attachments: ChannelAttachment[] = [];
+
+  if (message.document) {
+    attachments.push({
+      id: message.document.file_id,
+      filename: message.document.file_name,
+      mimeType: message.document.mime_type
+    });
+  }
+
+  const bestPhoto = message.photo?.at(-1);
+  if (bestPhoto) {
+    attachments.push({
+      id: bestPhoto.file_id,
+      filename: `photo-${bestPhoto.file_id}.jpg`,
+      mimeType: "image/jpeg"
+    });
+  }
+
+  return attachments;
 }
 
 export function telegramCallbackToInteraction(query: TelegramBot.CallbackQuery): ChannelInteraction | null {
