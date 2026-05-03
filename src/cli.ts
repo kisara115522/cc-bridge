@@ -32,7 +32,11 @@ export function createProgram(): Command {
       const adapter = new TelegramChannelAdapter({
         token: config.telegram.botToken,
         polling: config.telegram.polling,
-        downloadDir: join(config.runtime.stateDir, "telegram-downloads")
+        downloadDir: join(config.runtime.stateDir, "telegram-downloads"),
+        onPollingError: (error) => {
+          const message = error instanceof Error ? error.message : String(error);
+          console.error(`Telegram polling failed: ${message}; retrying`);
+        }
       });
       const app = createBridgeApp({
         config,

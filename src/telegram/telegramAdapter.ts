@@ -27,6 +27,8 @@ export interface TelegramAdapterOptions {
   readonly downloadDir: string;
   readonly apiBaseUrl?: string;
   readonly fetchImpl?: typeof fetch;
+  readonly pollRetryDelayMs?: number;
+  readonly onPollingError?: (error: unknown) => void;
 }
 
 interface TelegramUpdate {
@@ -47,12 +49,14 @@ export class TelegramChannelAdapter implements ChannelAdapter {
   };
   private readonly apiBaseUrl: string;
   private readonly fetchImpl: typeof fetch;
+  private readonly pollRetryDelayMs: number;
   private stopped = false;
   private pollPromise: Promise<void> | null = null;
 
   constructor(private readonly options: TelegramAdapterOptions) {
     this.apiBaseUrl = options.apiBaseUrl ?? `https://api.telegram.org/bot${options.token}`;
     this.fetchImpl = options.fetchImpl ?? fetch;
+    this.pollRetryDelayMs = options.pollRetryDelayMs ?? 1000;
   }
 
   async start(handlers: ChannelHandlers): Promise<void> {
@@ -125,22 +129,30 @@ export class TelegramChannelAdapter implements ChannelAdapter {
   private async poll(handlers: ChannelHandlers): Promise<void> {
     let offset: number | undefined;
     while (!this.stopped) {
-      const updates = await this.callTelegram<TelegramUpdate[]>("getUpdates", {
-        offset,
-        timeout: 25,
-        allowed_updates: ["message", "callback_query"]
-      });
-      for (const update of updates) {
-        offset = update.update_id + 1;
-        if (update.message) {
-          await handlers.onMessage(telegramMessageToInbound(update.message));
-        }
-        if (update.callback_query) {
-          const interaction = telegramCallbackToInteraction(update.callback_query);
-          if (interaction) {
-            await handlers.onInteraction(interaction);
+      try {
+        const updates = await this.callTelegram<TelegramUpdate[]>("getUpdates", {
+          offset,
+          timeout: 25,
+          allowed_updates: ["message", "callback_query"]
+        });
+        for (const update of updates) {
+          offset = update.update_id + 1;
+          if (update.message) {
+            await handlers.onMessage(telegramMessageToInbound(update.message));
+          }
+          if (update.callback_query) {
+            const interaction = telegramCallbackToInteraction(update.callback_query);
+            if (interaction) {
+              await handlers.onInteraction(interaction);
+            }
           }
         }
+      } catch (error) {
+        if (this.stopped) {
+          return;
+        }
+        this.options.onPollingError?.(error);
+        await sleep(this.pollRetryDelayMs);
       }
     }
   }
@@ -160,4 +172,11 @@ export class TelegramChannelAdapter implements ChannelAdapter {
     }
     return payload.result as T;
   }
+}
+
+function sleep(ms: number): Promise<void> {
+  if (ms <= 0) {
+    return Promise.resolve();
+  }
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
