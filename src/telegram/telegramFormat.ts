@@ -1,5 +1,3 @@
-import type TelegramBot from "node-telegram-bot-api";
-
 import type {
   ChannelAttachment,
   ChannelButtonRow,
@@ -8,9 +6,53 @@ import type {
   SentMessageRef
 } from "../channel/types.js";
 
+export interface TelegramUser {
+  id: number;
+  is_bot?: boolean;
+  first_name?: string;
+  last_name?: string;
+  username?: string;
+}
+
+export interface TelegramChat {
+  id: number;
+  type: string;
+}
+
+export interface TelegramFileLike {
+  file_id: string;
+  file_unique_id?: string;
+  file_name?: string;
+  mime_type?: string;
+  width?: number;
+  height?: number;
+}
+
+export interface TelegramMessage {
+  message_id: number;
+  date: number;
+  chat: TelegramChat;
+  from?: TelegramUser;
+  text?: string;
+  caption?: string;
+  document?: TelegramFileLike;
+  photo?: TelegramFileLike[];
+}
+
+export interface TelegramCallbackQuery {
+  id: string;
+  from: TelegramUser;
+  message?: TelegramMessage;
+  data?: string;
+}
+
+export interface TelegramInlineKeyboardMarkup {
+  inline_keyboard: Array<Array<{ text: string; callback_data: string }>>;
+}
+
 export function channelButtonsToTelegramMarkup(
   rows: readonly ChannelButtonRow[] | undefined
-): TelegramBot.InlineKeyboardMarkup | undefined {
+): TelegramInlineKeyboardMarkup | undefined {
   if (!rows || rows.length === 0) {
     return undefined;
   }
@@ -25,7 +67,7 @@ export function channelButtonsToTelegramMarkup(
   };
 }
 
-export function telegramMessageToInbound(message: TelegramBot.Message): InboundMessage {
+export function telegramMessageToInbound(message: TelegramMessage): InboundMessage {
   return {
     channel: "telegram",
     id: String(message.message_id),
@@ -44,7 +86,7 @@ export function telegramMessageToInbound(message: TelegramBot.Message): InboundM
   };
 }
 
-function telegramAttachments(message: TelegramBot.Message): ChannelAttachment[] {
+function telegramAttachments(message: TelegramMessage): ChannelAttachment[] {
   const attachments: ChannelAttachment[] = [];
 
   if (message.document) {
@@ -67,7 +109,7 @@ function telegramAttachments(message: TelegramBot.Message): ChannelAttachment[] 
   return attachments;
 }
 
-export function telegramCallbackToInteraction(query: TelegramBot.CallbackQuery): ChannelInteraction | null {
+export function telegramCallbackToInteraction(query: TelegramCallbackQuery): ChannelInteraction | null {
   if (!query.message || !query.data) {
     return null;
   }
