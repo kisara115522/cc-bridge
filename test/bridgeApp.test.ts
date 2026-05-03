@@ -95,7 +95,7 @@ describe("BridgeApp", () => {
     expect(harness.adapter.sent.at(-1)?.message.text).toContain("Switched to bridge_1");
 
     harness.runner.emitOutput(0, "agent says hello");
-    await Promise.resolve();
+    await waitForOutputFlush();
     expect(harness.adapter.sent.at(-1)?.message.text).toBe("agent says hello");
 
     await harness.adapter.emitMessage(textMessage("/resume bridge_1"));
@@ -132,6 +132,41 @@ describe("BridgeApp", () => {
     expect(harness.adapter.sent.at(-1)?.message.text).toContain("notes.txt");
     expect(harness.adapter.sent.at(-1)?.message.text).toContain("/tmp/uploads/bridge_1/notes.txt");
   });
+
+  it("coalesces fragmented terminal output before sending it to Telegram", async () => {
+    const harness = await createHarness();
+    await harness.app.start();
+    await harness.adapter.emitMessage(textMessage("/new codex /tmp/project"));
+
+    harness.runner.emitOutput(0, "\x1b[?25lSta");
+    harness.runner.emitOutput(0, "rting MCP ser");
+    harness.runner.emitOutput(0, "vers\x1b[?25h\nReady");
+    await waitForOutputFlush();
+
+    const outputMessages = harness.adapter.sent
+      .map((entry) => entry.message.text)
+      .filter((text) => text.includes("Starting") || text.includes("Ready"));
+    expect(outputMessages).toEqual(["Starting MCP servers\nReady"]);
+  });
+
+  it("keeps the bridge alive when Telegram rejects a runner output message", async () => {
+    const harness = await createHarness();
+    await harness.app.start();
+    await harness.adapter.emitMessage(textMessage("/new codex /tmp/project"));
+
+    harness.adapter.failNextSend(new Error("Telegram sendMessage failed: 429"));
+    harness.runner.emitOutput(0, "noisy terminal output");
+    await waitForOutputFlush();
+
+    await harness.adapter.emitMessage(textMessage("/status"));
+    expect(harness.adapter.sent.at(-1)?.message.text).toContain("Active session");
+    expect(harness.storage.auditLogs.list()).toContainEqual(
+      expect.objectContaining({
+        action: "telegram.output_delivery_failed",
+        sessionId: "bridge_1"
+      })
+    );
+  });
 });
 
 async function createHarness() {
@@ -147,6 +182,11 @@ async function createHarness() {
       CC_BRIDGE_DEFAULT_CWD: "/tmp/project",
       CLAUDE_COMMAND: "/bin/claude",
       CODEX_COMMAND: "/bin/codex"
+    },
+    overrides: {
+      runtime: {
+        outputFlushMs: 1
+      }
     }
   });
   const adapter = new FakeAdapter();
@@ -166,7 +206,11 @@ async function createHarness() {
       `11111111-1111-4111-8111-${String(nextNativeId++).padStart(12, "0")}`
   });
 
-  return { app, adapter, runner, uploadStore };
+  return { app, adapter, runner, storage, uploadStore };
+}
+
+function waitForOutputFlush(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, 5));
 }
 
 function textMessage(text: string): InboundMessage {
@@ -193,6 +237,7 @@ class FakeAdapter implements ChannelAdapter {
   readonly answers: unknown[] = [];
   readonly downloadedIds: string[] = [];
   private handlers: ChannelHandlers | null = null;
+  private nextSendError: Error | null = null;
 
   async start(handlers: ChannelHandlers): Promise<void> {
     this.handlers = handlers;
@@ -201,8 +246,17 @@ class FakeAdapter implements ChannelAdapter {
   async stop(): Promise<void> {}
 
   async sendMessage(target: { channel: string; chatId: string }, message: OutboundMessage): Promise<SentMessageRef> {
+    if (this.nextSendError) {
+      const error = this.nextSendError;
+      this.nextSendError = null;
+      throw error;
+    }
     this.sent.push({ target, message });
     return { channel: target.channel, chatId: target.chatId, messageId: `${this.sent.length}` };
+  }
+
+  failNextSend(error: Error): void {
+    this.nextSendError = error;
   }
 
   async editMessage(): Promise<void> {}

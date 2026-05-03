@@ -124,6 +124,8 @@ export function createBridgeApp(options: BridgeAppOptions): BridgeApp {
   });
   const handles = new Map<string, RunnerHandle>();
   const sequences = new Map<string, number>();
+  const outputBuffers = new Map<string, { text: string; timer: ReturnType<typeof setTimeout> | null }>();
+  const flushMs = options.config.runtime.outputFlushMs;
   const uploadStore =
     options.uploadStore ?? createUploadStore({ stateDir: options.config.runtime.stateDir });
 
@@ -262,7 +264,7 @@ export function createBridgeApp(options: BridgeAppOptions): BridgeApp {
           sessions.markRunning(session, event.pid);
         }
         if (event.kind === "output") {
-          void sendRunnerOutput(session, event.data);
+          bufferRunnerOutput(session, event.data);
         }
       }
     });
@@ -465,6 +467,71 @@ export function createBridgeApp(options: BridgeAppOptions): BridgeApp {
       payload,
       createdAt: now()
     });
+  }
+
+  function bufferRunnerOutput(session: BridgeSessionRecord, data: string): void {
+    let buffer = outputBuffers.get(session.id);
+    if (!buffer) {
+      buffer = { text: "", timer: null };
+      outputBuffers.set(session.id, buffer);
+    }
+
+    buffer.text += data;
+
+    if (buffer.timer) {
+      clearTimeout(buffer.timer);
+    }
+
+    buffer.timer = setTimeout(() => {
+      flushOutputBuffer(session.id);
+    }, flushMs);
+  }
+
+  async function flushOutputBuffer(sessionId: string): Promise<void> {
+    const buffer = outputBuffers.get(sessionId);
+    if (!buffer || buffer.text.length === 0) {
+      return;
+    }
+
+    const text = buffer.text;
+    buffer.text = "";
+    buffer.timer = null;
+
+    const session = sessions.get(sessionId);
+    if (!session) {
+      return;
+    }
+
+    for (const chunk of chunkTerminalOutput(text, {
+      maxChars: options.config.runtime.maxTelegramMessageChars
+    })) {
+      try {
+        await options.adapter.sendMessage(
+          { channel: session.channel, chatId: session.channelChatId },
+          { text: chunk }
+        );
+      } catch (error) {
+        options.storage.auditLogs.insert({
+          channel: session.channel,
+          chatId: session.channelChatId,
+          userId: session.channelUserId,
+          action: "telegram.output_delivery_failed",
+          sessionId,
+          details: { error: error instanceof Error ? error.message : String(error) },
+          createdAt: now()
+        });
+      }
+    }
+  }
+
+  function cleanupSessionBuffer(sessionId: string): void {
+    const buffer = outputBuffers.get(sessionId);
+    if (buffer) {
+      if (buffer.timer) {
+        clearTimeout(buffer.timer);
+      }
+      outputBuffers.delete(sessionId);
+    }
   }
 
   async function sendRunnerOutput(session: BridgeSessionRecord, data: string): Promise<void> {
