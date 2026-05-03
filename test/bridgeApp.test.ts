@@ -113,6 +113,25 @@ describe("BridgeApp", () => {
     ]);
     expect(harness.adapter.sent.at(-1)?.message.text).toContain("Forked bridge_1 into bridge_3");
   });
+
+  it("downloads attachments, stores them, forwards local paths, and lists files", async () => {
+    const harness = await createHarness();
+    await harness.app.start();
+
+    await harness.adapter.emitMessage(textMessage("/new claude /tmp/project"));
+    await harness.adapter.emitMessage({
+      ...textMessage("inspect this"),
+      attachments: [{ id: "telegram-file-1", filename: "notes.txt", mimeType: "text/plain" }]
+    });
+
+    expect(harness.adapter.downloadedIds).toEqual(["telegram-file-1"]);
+    expect(harness.uploadStore.saved).toHaveLength(1);
+    expect(harness.runner.handles[0]?.writes.at(-1)).toContain("Attachment saved: /tmp/uploads/bridge_1/notes.txt");
+
+    await harness.adapter.emitMessage(textMessage("/files"));
+    expect(harness.adapter.sent.at(-1)?.message.text).toContain("notes.txt");
+    expect(harness.adapter.sent.at(-1)?.message.text).toContain("/tmp/uploads/bridge_1/notes.txt");
+  });
 });
 
 async function createHarness() {
@@ -132,6 +151,7 @@ async function createHarness() {
   });
   const adapter = new FakeAdapter();
   const runner = new FakeRunner();
+  const uploadStore = new FakeUploadStore();
   let nextBridgeId = 1;
   let nextNativeId = 1;
   const app = createBridgeApp({
@@ -139,13 +159,14 @@ async function createHarness() {
     adapter,
     storage,
     runner,
+    uploadStore,
     now: () => "2026-05-03T10:00:00.000Z",
     idFactory: () => `bridge_${nextBridgeId++}`,
     nativeSessionIdFactory: () =>
       `11111111-1111-4111-8111-${String(nextNativeId++).padStart(12, "0")}`
   });
 
-  return { app, adapter, runner };
+  return { app, adapter, runner, uploadStore };
 }
 
 function textMessage(text: string): InboundMessage {
@@ -170,6 +191,7 @@ class FakeAdapter implements ChannelAdapter {
   };
   readonly sent: Array<{ target: { channel: string; chatId: string }; message: OutboundMessage }> = [];
   readonly answers: unknown[] = [];
+  readonly downloadedIds: string[] = [];
   private handlers: ChannelHandlers | null = null;
 
   async start(handlers: ChannelHandlers): Promise<void> {
@@ -189,8 +211,14 @@ class FakeAdapter implements ChannelAdapter {
     this.answers.push({ interaction, response });
   }
 
-  async downloadAttachment(): Promise<never> {
-    throw new Error("not used");
+  async downloadAttachment(attachment: { id: string; filename?: string; mimeType?: string }) {
+    this.downloadedIds.push(attachment.id);
+    return {
+      attachmentId: attachment.id,
+      filename: attachment.filename,
+      mimeType: attachment.mimeType,
+      data: new TextEncoder().encode("hello")
+    };
   }
 
   async emitMessage(message: InboundMessage): Promise<void> {
@@ -205,6 +233,36 @@ class FakeAdapter implements ChannelAdapter {
       throw new Error("adapter not started");
     }
     await this.handlers.onInteraction(interaction);
+  }
+}
+
+class FakeUploadStore {
+  readonly saved: Array<{
+    sessionId: string;
+    attachmentId: string;
+    filename: string;
+    mimeType?: string;
+    localPath: string;
+    sizeBytes: number;
+  }> = [];
+
+  async save(input: {
+    sessionId: string;
+    attachmentId: string;
+    filename?: string;
+    mimeType?: string;
+    data: Uint8Array;
+  }) {
+    const saved = {
+      sessionId: input.sessionId,
+      attachmentId: input.attachmentId,
+      filename: input.filename ?? input.attachmentId,
+      mimeType: input.mimeType,
+      localPath: `/tmp/uploads/${input.sessionId}/${input.filename ?? input.attachmentId}`,
+      sizeBytes: input.data.byteLength
+    };
+    this.saved.push(saved);
+    return saved;
   }
 }
 

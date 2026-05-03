@@ -10,6 +10,7 @@ import { SessionManager } from "../session/sessionManager.js";
 import type { BridgeSessionRecord } from "../storage/repositories.js";
 import type { RunnerHandle, ToolRunner } from "../runner/ptyRunner.js";
 import { chunkTerminalOutput } from "../terminal/chunker.js";
+import { createUploadStore } from "../uploads/uploadStore.js";
 
 export interface BridgeAppOptions {
   readonly config: BridgeConfig;
@@ -49,6 +50,25 @@ export interface BridgeAppOptions {
         createdAt: string;
       } | null;
     };
+    uploads: {
+      insert(upload: {
+        sessionId: string;
+        channel: string;
+        channelFileId: string;
+        originalFilename: string | null;
+        mimeType: string | null;
+        localPath: string;
+        sizeBytes: number;
+        caption: string | null;
+        createdAt: string;
+      }): number;
+      list(sessionId: string): Array<{
+        originalFilename: string | null;
+        localPath: string;
+        sizeBytes: number;
+        createdAt: string;
+      }>;
+    };
     auditLogs: {
       insert(log: {
         channel: string;
@@ -62,6 +82,22 @@ export interface BridgeAppOptions {
     };
   };
   readonly runner: ToolRunner;
+  readonly uploadStore?: {
+    save(input: {
+      sessionId: string;
+      attachmentId: string;
+      filename?: string;
+      mimeType?: string;
+      data: Uint8Array;
+    }): Promise<{
+      sessionId: string;
+      attachmentId: string;
+      filename: string;
+      mimeType?: string;
+      localPath: string;
+      sizeBytes: number;
+    }>;
+  };
   readonly now?: () => string;
   readonly idFactory?: () => string;
   readonly nativeSessionIdFactory?: () => string;
@@ -88,6 +124,8 @@ export function createBridgeApp(options: BridgeAppOptions): BridgeApp {
   });
   const handles = new Map<string, RunnerHandle>();
   const sequences = new Map<string, number>();
+  const uploadStore =
+    options.uploadStore ?? createUploadStore({ stateDir: options.config.runtime.stateDir });
 
   async function handleMessage(message: InboundMessage): Promise<void> {
     const decision = auth.authorize({
@@ -115,6 +153,13 @@ export function createBridgeApp(options: BridgeAppOptions): BridgeApp {
       chatId: message.chat.id,
       userId: decision.principal.userId
     });
+    if (message.attachments && message.attachments.length > 0) {
+      await handleAttachments(message, {
+        channel: message.channel,
+        chatId: message.chat.id,
+        userId: decision.principal.userId
+      });
+    }
   }
 
   async function routeCommand(
@@ -169,7 +214,7 @@ export function createBridgeApp(options: BridgeAppOptions): BridgeApp {
         await send(principal, formatCwd(command.value, sessions.getActive(principal.channel, principal.chatId, principal.userId)));
         return;
       case "files":
-        await send(principal, "File listing is not wired yet; uploads are stored locally when received.");
+        await listFiles(principal);
         return;
     }
   }
@@ -279,6 +324,63 @@ export function createBridgeApp(options: BridgeAppOptions): BridgeApp {
     handles.get(session.id)?.interrupt();
     sessions.markStopped(session);
     await send(principal, `Stop requested for ${session.id}`);
+  }
+
+  async function handleAttachments(
+    message: InboundMessage,
+    principal: { channel: string; chatId: string; userId: string }
+  ): Promise<void> {
+    const session = sessions.getActive(principal.channel, principal.chatId, principal.userId);
+    if (!session) {
+      await send(principal, "No active session for attachment. Use /new codex or /new claude.");
+      return;
+    }
+    const handle = handles.get(session.id);
+    for (const attachment of message.attachments ?? []) {
+      const downloaded = await options.adapter.downloadAttachment(attachment);
+      const saved = await uploadStore.save({
+        sessionId: session.id,
+        attachmentId: downloaded.attachmentId,
+        filename: downloaded.filename,
+        mimeType: downloaded.mimeType,
+        data: downloaded.data
+      });
+      options.storage.uploads.insert({
+        sessionId: session.id,
+        channel: message.channel,
+        channelFileId: attachment.id,
+        originalFilename: saved.filename,
+        mimeType: saved.mimeType ?? null,
+        localPath: saved.localPath,
+        sizeBytes: saved.sizeBytes,
+        caption: message.text ?? null,
+        createdAt: now()
+      });
+      handle?.write(`Attachment saved: ${saved.localPath}\r`);
+    }
+  }
+
+  async function listFiles(principal: { channel: string; chatId: string; userId: string }): Promise<void> {
+    const session = sessions.getActive(principal.channel, principal.chatId, principal.userId);
+    if (!session) {
+      await send(principal, "No active session.");
+      return;
+    }
+    const files = options.storage.uploads.list(session.id);
+    if (files.length === 0) {
+      await send(principal, `No files for ${session.id}.`);
+      return;
+    }
+    await send(
+      principal,
+      [
+        `Files for ${session.id}:`,
+        ...files.map(
+          (file) =>
+            `- ${file.originalFilename ?? "upload"} ${file.sizeBytes} bytes ${file.localPath}`
+        )
+      ].join("\n")
+    );
   }
 
   async function switchSession(
