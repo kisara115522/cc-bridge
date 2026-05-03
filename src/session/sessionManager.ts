@@ -15,6 +15,8 @@ export interface SessionManagerOptions {
     upsert(session: BridgeSessionRecord): void;
     get(id: string): BridgeSessionRecord | null;
     getActive(channel: string, chatId: string, userId: string): BridgeSessionRecord | null;
+    listForPrincipal(channel: string, chatId: string, userId: string): BridgeSessionRecord[];
+    setActive(id: string): void;
   };
   readonly now: () => string;
   readonly idFactory: () => string;
@@ -30,6 +32,11 @@ export interface NewSessionRequest {
 }
 
 export interface CreatedSession {
+  readonly session: BridgeSessionRecord;
+  readonly command: NativeSessionCommand;
+}
+
+export interface ExistingSessionStart {
   readonly session: BridgeSessionRecord;
   readonly command: NativeSessionCommand;
 }
@@ -100,6 +107,56 @@ export class SessionManager {
     return this.options.sessions.get(id);
   }
 
+  listForPrincipal(channel: string, chatId: string, userId: string): BridgeSessionRecord[] {
+    return this.options.sessions.listForPrincipal(channel, chatId, userId);
+  }
+
+  switchActive(id: string): BridgeSessionRecord {
+    const session = this.requireSession(id);
+    this.options.sessions.setActive(id);
+    return {
+      ...session,
+      isActive: true
+    };
+  }
+
+  resume(id: string): ExistingSessionStart {
+    const session = this.switchActive(id);
+    return {
+      session,
+      command: this.buildExistingCommand(session, "resume")
+    };
+  }
+
+  fork(id: string): ExistingSessionStart {
+    const source = this.requireSession(id);
+    const command = this.buildExistingCommand(source, "fork");
+    const now = this.options.now();
+    const forked: BridgeSessionRecord = {
+      ...source,
+      id: this.options.idFactory(),
+      status: "starting",
+      activePtyPid: null,
+      native: {
+        tool: source.tool,
+        id: null,
+        resumeCommand: [],
+        discoveredAt: null,
+        confidence: "unknown"
+      },
+      createdAt: now,
+      updatedAt: now,
+      lastActiveAt: now,
+      title: `fork of ${source.id}`,
+      isActive: true
+    };
+    this.options.sessions.upsert(forked);
+    return {
+      session: forked,
+      command
+    };
+  }
+
   markRunning(session: BridgeSessionRecord, pid: number): BridgeSessionRecord {
     const updated = this.patch(session, {
       status: "running",
@@ -122,6 +179,33 @@ export class SessionManager {
     const updated = this.patch(session, {});
     this.options.sessions.upsert(updated);
     return updated;
+  }
+
+  private buildExistingCommand(
+    session: BridgeSessionRecord,
+    action: "resume" | "fork"
+  ): NativeSessionCommand {
+    if (!session.native?.id) {
+      throw new Error(`${session.tool} native session is not available for ${action}`);
+    }
+
+    const toolConfig = this.options.config.tools[session.tool];
+    return buildNativeSessionCommand({
+      tool: session.tool,
+      action,
+      command: toolConfig.command,
+      baseArgs: toolConfig.args,
+      cwd: session.cwd,
+      sessionId: session.native.id
+    });
+  }
+
+  private requireSession(id: string): BridgeSessionRecord {
+    const session = this.options.sessions.get(id);
+    if (!session) {
+      throw new Error(`Bridge session not found: ${id}`);
+    }
+    return session;
   }
 
   private patch(

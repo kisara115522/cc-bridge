@@ -9,6 +9,7 @@ import { callbackActionToPtyInput, expiredCallbackAnswer } from "../interaction/
 import { SessionManager } from "../session/sessionManager.js";
 import type { BridgeSessionRecord } from "../storage/repositories.js";
 import type { RunnerHandle, ToolRunner } from "../runner/ptyRunner.js";
+import { chunkTerminalOutput } from "../terminal/chunker.js";
 
 export interface BridgeAppOptions {
   readonly config: BridgeConfig;
@@ -153,12 +154,22 @@ export function createBridgeApp(options: BridgeAppOptions): BridgeApp {
         await send(principal, "Doctor is available from the local CLI in this build.");
         return;
       case "sessions":
+        await send(principal, formatSessionList(sessions.listForPrincipal(principal.channel, principal.chatId, principal.userId)));
+        return;
       case "switch":
+        await switchSession(principal, command.id);
+        return;
       case "resume":
+        await resumeSession(principal, command.id);
+        return;
       case "fork":
+        await forkSession(principal, command.id);
+        return;
       case "cwd":
+        await send(principal, formatCwd(command.value, sessions.getActive(principal.channel, principal.chatId, principal.userId)));
+        return;
       case "files":
-        await send(principal, `${command.kind} is not wired in Telegram yet.`);
+        await send(principal, "File listing is not wired yet; uploads are stored locally when received.");
         return;
     }
   }
@@ -182,24 +193,36 @@ export function createBridgeApp(options: BridgeAppOptions): BridgeApp {
       return;
     }
 
+    const handle = await startRunnerForSession(created.session, created.command, tool);
+    await send(principal, `Started ${tool} session ${created.session.id}`);
+  }
+
+  async function startRunnerForSession(
+    session: BridgeSessionRecord,
+    command: { command: string; args: string[]; cwd: string },
+    tool: "codex" | "claude"
+  ): Promise<RunnerHandle> {
     const handle = await options.runner.start({
-      sessionId: created.session.id,
+      sessionId: session.id,
       tool,
-      command: created.command.command,
-      args: created.command.args,
-      cwd: created.command.cwd,
+      command: command.command,
+      args: command.args,
+      cwd: command.cwd,
       env: {},
       cols: options.config.runtime.ptyCols,
       rows: options.config.runtime.ptyRows,
       onEvent: (event) => {
         recordRunnerEvent(event.sessionId, event.kind, event);
         if (event.kind === "started") {
-          sessions.markRunning(created.session, event.pid);
+          sessions.markRunning(session, event.pid);
+        }
+        if (event.kind === "output") {
+          void sendRunnerOutput(session, event.data);
         }
       }
     });
-    handles.set(created.session.id, handle);
-    await send(principal, `Started ${tool} session ${created.session.id}`);
+    handles.set(session.id, handle);
+    return handle;
   }
 
   async function writeToActive(
@@ -258,6 +281,60 @@ export function createBridgeApp(options: BridgeAppOptions): BridgeApp {
     await send(principal, `Stop requested for ${session.id}`);
   }
 
+  async function switchSession(
+    principal: { channel: string; chatId: string; userId: string },
+    id: string
+  ): Promise<void> {
+    try {
+      const session = sessions.switchActive(id);
+      if (
+        session.channel !== principal.channel ||
+        session.channelChatId !== principal.chatId ||
+        session.channelUserId !== principal.userId
+      ) {
+        await send(principal, `Bridge session not found: ${id}`);
+        return;
+      }
+      await send(principal, `Switched to ${id}`);
+    } catch (error) {
+      await send(principal, error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  async function resumeSession(
+    principal: { channel: string; chatId: string; userId: string },
+    id: string
+  ): Promise<void> {
+    try {
+      const resumed = sessions.resume(id);
+      if (!belongsToPrincipal(resumed.session, principal)) {
+        await send(principal, `Bridge session not found: ${id}`);
+        return;
+      }
+      await startRunnerForSession(resumed.session, resumed.command, resumed.session.tool);
+      await send(principal, `Resumed ${id}`);
+    } catch (error) {
+      await send(principal, error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  async function forkSession(
+    principal: { channel: string; chatId: string; userId: string },
+    id: string
+  ): Promise<void> {
+    try {
+      const forked = sessions.fork(id);
+      if (!belongsToPrincipal(forked.session, principal)) {
+        await send(principal, `Bridge session not found: ${id}`);
+        return;
+      }
+      await startRunnerForSession(forked.session, forked.command, forked.session.tool);
+      await send(principal, `Forked ${id} into ${forked.session.id}`);
+    } catch (error) {
+      await send(principal, error instanceof Error ? error.message : String(error));
+    }
+  }
+
   async function handleInteraction(interaction: ChannelInteraction): Promise<void> {
     const decoded = decodeCallbackData(interaction.value);
     if (!decoded) {
@@ -288,6 +365,17 @@ export function createBridgeApp(options: BridgeAppOptions): BridgeApp {
     });
   }
 
+  async function sendRunnerOutput(session: BridgeSessionRecord, data: string): Promise<void> {
+    for (const chunk of chunkTerminalOutput(data, {
+      maxChars: options.config.runtime.maxTelegramMessageChars
+    })) {
+      await options.adapter.sendMessage(
+        { channel: session.channel, chatId: session.channelChatId },
+        { text: chunk }
+      );
+    }
+  }
+
   async function send(
     principal: { channel: string; chatId: string },
     text: string
@@ -306,6 +394,38 @@ export function createBridgeApp(options: BridgeAppOptions): BridgeApp {
       await options.adapter.stop();
     }
   };
+}
+
+function formatSessionList(sessions: BridgeSessionRecord[]): string {
+  if (sessions.length === 0) {
+    return "No sessions yet. Use /new codex or /new claude.";
+  }
+
+  return [
+    "Sessions:",
+    ...sessions.map((session) => {
+      const active = session.isActive ? "*" : "-";
+      return `${active} ${session.id} ${session.tool} ${session.status} ${session.cwd}`;
+    })
+  ].join("\n");
+}
+
+function formatCwd(requested: string | null, session: BridgeSessionRecord | null): string {
+  if (requested) {
+    return "Changing cwd for existing sessions is not supported yet. Start a new session with /new <tool> <cwd>.";
+  }
+  return session ? `Current cwd: ${session.cwd}` : "No active session.";
+}
+
+function belongsToPrincipal(
+  session: BridgeSessionRecord,
+  principal: { channel: string; chatId: string; userId: string }
+): boolean {
+  return (
+    session.channel === principal.channel &&
+    session.channelChatId === principal.chatId &&
+    session.channelUserId === principal.userId
+  );
 }
 
 function formatStatus(session: BridgeSessionRecord | null): string {

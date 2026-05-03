@@ -79,6 +79,40 @@ describe("BridgeApp", () => {
     expect(harness.runner.starts).toHaveLength(0);
     expect(harness.adapter.sent.at(-1)?.message.text).toBe("Unauthorized.");
   });
+
+  it("lists, switches, resumes, forks, and streams session output", async () => {
+    const harness = await createHarness();
+    await harness.app.start();
+
+    await harness.adapter.emitMessage(textMessage("/new claude /tmp/project"));
+    await harness.adapter.emitMessage(textMessage("/new codex /tmp/project"));
+
+    await harness.adapter.emitMessage(textMessage("/sessions"));
+    expect(harness.adapter.sent.at(-1)?.message.text).toContain("bridge_2");
+    expect(harness.adapter.sent.at(-1)?.message.text).toContain("bridge_1");
+
+    await harness.adapter.emitMessage(textMessage("/switch bridge_1"));
+    expect(harness.adapter.sent.at(-1)?.message.text).toContain("Switched to bridge_1");
+
+    harness.runner.emitOutput(0, "agent says hello");
+    await Promise.resolve();
+    expect(harness.adapter.sent.at(-1)?.message.text).toBe("agent says hello");
+
+    await harness.adapter.emitMessage(textMessage("/resume bridge_1"));
+    expect(harness.runner.starts.at(-1)?.args).toEqual([
+      "--resume",
+      "11111111-1111-4111-8111-000000000001"
+    ]);
+    expect(harness.adapter.sent.at(-1)?.message.text).toContain("Resumed bridge_1");
+
+    await harness.adapter.emitMessage(textMessage("/fork bridge_1"));
+    expect(harness.runner.starts.at(-1)?.args).toEqual([
+      "--resume",
+      "11111111-1111-4111-8111-000000000001",
+      "--fork-session"
+    ]);
+    expect(harness.adapter.sent.at(-1)?.message.text).toContain("Forked bridge_1 into bridge_3");
+  });
 });
 
 async function createHarness() {
@@ -98,14 +132,17 @@ async function createHarness() {
   });
   const adapter = new FakeAdapter();
   const runner = new FakeRunner();
+  let nextBridgeId = 1;
+  let nextNativeId = 1;
   const app = createBridgeApp({
     config,
     adapter,
     storage,
     runner,
     now: () => "2026-05-03T10:00:00.000Z",
-    idFactory: () => "bridge_1",
-    nativeSessionIdFactory: () => "11111111-1111-4111-8111-111111111111"
+    idFactory: () => `bridge_${nextBridgeId++}`,
+    nativeSessionIdFactory: () =>
+      `11111111-1111-4111-8111-${String(nextNativeId++).padStart(12, "0")}`
   });
 
   return { app, adapter, runner };
@@ -181,6 +218,14 @@ class FakeRunner implements ToolRunner {
     this.handles.push(handle);
     request.onEvent({ kind: "started", sessionId: request.sessionId, pid: handle.pid });
     return handle;
+  }
+
+  emitOutput(index: number, data: string): void {
+    const request = this.starts[index];
+    if (!request) {
+      throw new Error(`No runner request at ${index}`);
+    }
+    request.onEvent({ kind: "output", sessionId: request.sessionId, data });
   }
 }
 
