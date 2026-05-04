@@ -116,6 +116,27 @@ describe("terminal output chunking", () => {
     expect(text).not.toContain("thought for");
   });
 
+  it("filters stuttered TUI redraw fragments", () => {
+    const output = [
+      "St",
+      "Sta",
+      "Start",
+      "Starti",
+      "Starting",
+      "Starting MCP",
+      "Starting MCP servers (1/4): context7, github, openaiDeveloperDocs",
+      "",
+      "Hello from the agent"
+    ].join("\n");
+    const chunks = chunkTerminalOutput(output, { maxChars: 500 });
+    const text = chunks.join("\n");
+
+    expect(text).toContain("Hello from the agent");
+    // The stuttered "Starting MCP servers" line should be kept as it's the complete version,
+    // but individual stuttered fragments should be filtered
+    expect(text).not.toContain("StStaStart");
+  });
+
   it("returns empty array when only TUI artifacts remain", () => {
     const output = [
       "╭───╮",
