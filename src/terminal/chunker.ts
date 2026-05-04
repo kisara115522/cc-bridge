@@ -232,6 +232,11 @@ export function cleanTuiOutput(text: string): string {
       continue;
     }
 
+    // Skip stuttered TUI redraw fragments: "StStaStartStartiStarting" has repeated prefix
+    if (hasStutteredPrefix(cleanedLine)) {
+      continue;
+    }
+
     cleaned.push(cleanedLine);
   }
 
@@ -259,4 +264,30 @@ export function cleanTuiOutput(text: string): string {
   }
 
   return compressed.join("\n");
+}
+
+/**
+ * Detect TUI redraw stuttering: cursor repositioning causes the same text to be
+ * captured multiple times with increasing length, producing lines like
+ * "StStaStartStartiStarting" where the same prefix repeats with small variations.
+ *
+ * Detection: find a substring (3+ chars) that appears 3+ times consecutively.
+ */
+function hasStutteredPrefix(line: string): boolean {
+  for (let len = 3; len <= Math.floor(line.length / 3); len++) {
+    for (let start = 0; start <= line.length - len * 3; start++) {
+      const substr = line.slice(start, start + len);
+      // Check if this substring repeats 3+ times consecutively
+      let repetitions = 1;
+      let pos = start + len;
+      while (pos + len <= line.length && line.slice(pos, pos + len) === substr) {
+        repetitions++;
+        pos += len;
+      }
+      if (repetitions >= 3) {
+        return true;
+      }
+    }
+  }
+  return false;
 }
