@@ -87,22 +87,33 @@ describe("terminal output chunking", () => {
       "thinking with xhigh effort",
       "✻✽✶✳✢·",
       "",
-      "∴ Thinking…                                        The user said \"hi\". Let me check if any skill applies.",
+      "∴ Thinking…",
+      "The user said \"hi\". Let me check if any skill applies.",
       "",
       "✻Tomfolering… (5s · ↓ 1 tokens · thinking with xhigh effort)",
       "────────────────────────────────────────────────────────────────────────────────────────────────────",
       "xxx@XXXdeMacBook-Pro ~/Code/workSpace |mimo-v2.5-pro[1m] 22:08:500tokens",
-      "⏵⏵don'taskon (shift+tabtocycle)"
+      "⏵⏵don'taskon (shift+tabtocycle)",
+      "",
+      "你好！有什么我可以帮你的吗？",
+      "",
+      "Moonwalking… (running stop hooks… 0/2  9s  ↓ 16 tokens  thought for 2s)",
+      "129",
+      "Churned for 9s"
     ].join("\n");
     const chunks = chunkTerminalOutput(output, { maxChars: 500 });
 
     expect(chunks.length).toBeGreaterThan(0);
-    expect(chunks.join("\n")).toContain("The user said");
-    expect(chunks.join("\n")).not.toContain("Tomfoolering");
-    expect(chunks.join("\n")).not.toContain("╭");
-    expect(chunks.join("\n")).not.toContain("╰");
-    expect(chunks.join("\n")).not.toContain("tokens");
-    expect(chunks.join("\n")).not.toContain("shift+tab");
+    const text = chunks.join("\n");
+    expect(text).toContain("The user said");
+    expect(text).toContain("你好！有什么我可以帮你的吗？");
+    expect(text).not.toContain("Tomfoolering");
+    expect(text).not.toContain("Moonwalking");
+    expect(text).not.toContain("Churned");
+    expect(text).not.toContain("╭");
+    expect(text).not.toContain("tokens");
+    expect(text).not.toContain("shift+tab");
+    expect(text).not.toContain("thought for");
   });
 
   it("returns empty array when only TUI artifacts remain", () => {
