@@ -116,7 +116,7 @@ function chunkLongCodeLine(openingFence: string, line: string, maxChars: number)
 }
 
 // Box-drawing and TUI border characters
-const BOX_CHARS = /[─-╿▀-▟▔▌▐▄▀]/;
+const BOX_CHARS = /[─-╿▀-▟▔▌▐▄▀⎿⏺◉❯]/;
 
 // Spinner/progress indicator characters
 const SPINNER_CHARS = /[✻✽✶✳✢·]/g;
@@ -124,13 +124,18 @@ const SPINNER_CHARS = /[✻✽✶✳✢·]/g;
 // Full-line TUI patterns to remove
 const TUI_LINE_PATTERNS = [
   // Box-drawing border lines (mostly box chars and whitespace)
-  /^[─-╿▀-▟▔▌▐▄▀\s]+$/,
+  /^[─-╿▀-▟▔▌▐▄▀⎿⏺◉❯\s]+$/,
   // Status bar: user@host ... | model ... HH:MM (with or without spaces)
   /\S+@\S+\s+.*\|.*\d{2}:\d{2}/,
-  // Token count: "0tokens", "↓ 1 tokens", "500tokens" (may be appended to other text)
-  /[\d↓\s]*tokens?$/i,
-  // Keyboard shortcut hints: "⏵⏵ don't ask on (shift+tab to cycle)"
+  // Token count lines: "0tokens", "↓ 1 tokens", "500tokens", "44.3k out:133"
+  /[\d↓.\s]*tokens?$/i,
+  /in:\d[\d,.k]*\s+out:\d[\d,.k]*/,
+  // Cost display: "$0.23", "$1.05"
+  /\$[\d.]+/,
+  // Keyboard shortcut hints
   /⏵⏵/,
+  /shift\+tab/,
+  /ctrl\+o/,
   // Thinking/processing status lines
   /thinking with \w+ effort/i,
   /Tomfoolering/i,
@@ -140,6 +145,31 @@ const TUI_LINE_PATTERNS = [
   /^│/,
   // Status line with spinner and timing
   /…\s*\(\d+s\s*·/,
+  // Duration lines: "Worked for 6s", "Brewed for 6s", "Quantumizing…"
+  /^(Worked|Brewed|Actualizing|Tomfoolering|Quantumizing)\b/,
+  // Stop hook output lines
+  /^Ran \d+ stop hooks?$/i,
+  /^⎿\s+~/,
+  /^⎿\s+\/bin\//,
+  /^⎿\s+Stop hook/,
+  /Stop hook error/i,
+  // Session start/hook error lines
+  /^⎿\s+SessionStart/,
+  /SessionStart:.*hook error/,
+  /non-blocking status code/,
+  // Spinner animation frames (lines with just a single digit)
+  /^\d$/,
+  // TUI redraw fragments (very short meaningless fragments, 1-3 lowercase chars)
+  /^[a-z…]{1,3}$/,
+  // Percentage/progress: "0% 0/1.0M in:0 out:0 22:24:09"
+  /^\d+%\s+\d+\/[\d.]+[kKmM]?/,
+  // Thought duration: "5thought for 1s)"
+  /\d+thought for \d+s\)/,
+  // Token usage summary at bottom
+  /\d[\d,.]*[kKmM]?\/[\d.]+[kKmM]?\s+in:\d/,
+  // Effort level indicators
+  /^◉\w+/,
+  /\/effort$/,
 ];
 
 export function cleanTuiOutput(text: string): string {
@@ -161,7 +191,7 @@ export function cleanTuiOutput(text: string): string {
     }
 
     // Skip lines that are only box-drawing chars
-    if (BOX_CHARS.test(trimmed) && trimmed.replace(/[─-╿▀-▟▔▌▐▄▀\s│╭╮╰╯]/g, "").length === 0) {
+    if (BOX_CHARS.test(trimmed) && trimmed.replace(/[─-╿▀-▟▔▌▐▄▀⎿⏺◉❯\s│╭╮╰╯]/g, "").length === 0) {
       continue;
     }
 
@@ -178,8 +208,8 @@ export function cleanTuiOutput(text: string): string {
       continue;
     }
 
-    // Remove box-drawing characters from the line
-    cleanedLine = cleanedLine.replace(/[─-╿▀-▟▔▌▐▄▀│╭╮╰╯]/g, "").trim();
+    // Remove box-drawing and TUI indicator characters from the line
+    cleanedLine = cleanedLine.replace(/[─-╿▀-▟▔▌▐▄▀⎿⏺◉❯│╭╮╰╯]/g, "").trim();
 
     // Skip if line became empty after box removal
     if (cleanedLine.length === 0) {
