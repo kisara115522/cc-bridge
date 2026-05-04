@@ -145,8 +145,12 @@ const TUI_LINE_PATTERNS = [
   /^│/,
   // Status line with spinner and timing
   /…\s*\(\d+s\s*·/,
-  // Duration lines: "Worked for 6s", "Brewed for 6s", "Quantumizing…"
-  /^(Worked|Brewed|Actualizing|Tomfoolering|Quantumizing)\b/,
+  // Duration/status lines: "Worked for 6s", "Brewed for 6s", "Moonwalking…", "Churned for 9s"
+  /^(Worked|Brewed|Actualizing|Tomfoolering|Quantumizing|Moonwalking|Churned)\b/,
+  // "∴ Thinking…" prefix line
+  /^∴\s*Thinking/,
+  // "thought for Xs)" suffix on any line
+  /thought for \d+s\)/,
   // Stop hook output lines
   /^Ran \d+ stop hooks?$/i,
   /^⎿\s+~/,
@@ -157,10 +161,10 @@ const TUI_LINE_PATTERNS = [
   /^⎿\s+SessionStart/,
   /SessionStart:.*hook error/,
   /non-blocking status code/,
-  // Spinner animation frames (lines with just a single digit)
-  /^\d$/,
-  // TUI redraw fragments (very short meaningless fragments, 1-3 lowercase chars)
-  /^[a-z…]{1,3}$/,
+  // Spinner animation frames (lines with just digits, 1-3 chars)
+  /^\d{1,3}$/,
+  // TUI redraw fragments (very short meaningless fragments, 1-3 chars including mixed case)
+  /^[A-Za-z…]{1,3}$/,
   // Percentage/progress: "0% 0/1.0M in:0 out:0 22:24:09"
   /^\d+%\s+\d+\/[\d.]+[kKmM]?/,
   // Thought duration: "5thought for 1s)"
@@ -210,6 +214,18 @@ export function cleanTuiOutput(text: string): string {
 
     // Remove box-drawing and TUI indicator characters from the line
     cleanedLine = cleanedLine.replace(/[─-╿▀-▟▔▌▐▄▀⎿⏺◉❯│╭╮╰╯]/g, "").trim();
+
+    // Strip inline token counts: "↓ 16 tokens", "↓ 1 tokens", trailing "tokens" with numbers
+    cleanedLine = cleanedLine.replace(/\s*↓?\s*\d+\s*tokens?\b/gi, "").trim();
+
+    // Strip inline cost: "$0.23"
+    cleanedLine = cleanedLine.replace(/\s*\$[\d.]+\b/g, "").trim();
+
+    // Strip inline thought duration: "thought for 2s)"
+    cleanedLine = cleanedLine.replace(/\s*thought for \d+s\)/g, "").trim();
+
+    // Strip "running stop hooks" suffix
+    cleanedLine = cleanedLine.replace(/\s*\(running stop hooks…[^\)]*\)/g, "").trim();
 
     // Skip if line became empty after box removal
     if (cleanedLine.length === 0) {
